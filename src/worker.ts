@@ -1,8 +1,7 @@
 import {createConnection, getConnectionOptions, getRepository} from "typeorm";
-import { Employee } from "./entity/Employee";
 import { Sample } from "./entity/Sample";
 
-import { Consumer, ConsumerOptions, ConnectionOptions } from './rabbit'
+import { Consumer, ConsumerOptions, ConnectionOptions, Producer } from './rabbit'
 
 var fs = require('fs')
 
@@ -88,15 +87,23 @@ export class Worker extends Consumer{
 
 export interface SaveOptions extends ConnectionOptions{
     topic: string
-    employee: Employee
+    employee: any
+}
+
+interface ISample {
+    id?: number,
+    name: string,
+    description: string,
+    data: Buffer
 }
 
 // wait for {emoployee} messages on {topic}.face and corresponding sample 
 export class SaveWorker extends Consumer {
-    employee:Employee
+    employee:any
     ops = {}
     save_cnt = 0
-    state
+    done: boolean
+    items: ISample[]
 
     constructor(c: SaveOptions){
         super({...c, keys: [`${c.topic}.face`]})
@@ -104,14 +111,23 @@ export class SaveWorker extends Consumer {
         console.log("protec worker init")
     }
 
+    onSaveDone = () => {
+        return new Promise<ISample[]>((resolve, reject)=> {
+            if(this.done) resolve(this.items)
+            else reject("error")
+        })
+    }
     save = async (f) => {
-        if(this.state != 'completed'){
+        if(!this.done){
             let b = Buffer.from(f, 'base64')
             this.ops['data'] = b
             this.ops['name'] = `${this.save_cnt++}.jpeg`
             this.ops['employee'] = this.employee
             const item = await getRepository(Sample).create(this.ops);
-            const res = await getRepository(Sample).save(item).then(() => this.state = this.save_cnt > 10? 'completed':this.state);
+            const res = await getRepository(Sample).save(item).then(() => {
+                this.items.push(item as ISample)
+                this.done = (this.save_cnt == 20)
+            });
         }
     }
 
@@ -122,20 +138,44 @@ export class SaveWorker extends Consumer {
     }
 }
 
-export interface ManagerOptions extends ConnectionOptions {
-    topic: string
-}
 
-// wait for messsages on *.action, parse action parameters and start the corresponding worker
-export class WorkerManager extends Consumer {
-    constructor(c: ManagerOptions){
-        super({...c, keys: [`${c.topic}.action`]})
+export class WorkerManager{
+    private connectionOptions: ConnectionOptions
+    private worker = {}
+    // private producer: Producer
+
+    executeSaveWorker = (topic: string, employee: any) => {
+        let w = new SaveWorker({...this.connectionOptions, topic: topic, employee: employee})
+        let p = new Producer({...this.connectionOptions, key:`${topic}.state`})
+        p.onChannelUp()
+        .then(res => {
+            console.log("publishing...")
+            p.publish("start")
+        })
+        .catch(err => console.error(err))
+        
+        return w.onSaveDone()
+    }
+    constructor(c: ConnectionOptions){
+        this.connectionOptions = c
         console.log("detec worker init")
     }
-
-    callback = (msg) => {
-        console.log(" [x] %s:'%s'", msg.fields.routingKey.split('.')[0], msg.content.toString());
-        // this.save(msg.content)
-        // this.d[msg.fields.routingKey](msg.content)
-    }
 }
+// export interface ManagerOptions extends ConnectionOptions {
+    // topic: string
+// }
+// wait for messsages on *.action, parse action parameters and start the corresponding worker
+// export class WorkerManager extends Consumer {
+    
+//     constructor(c: ManagerOptions){
+//         super({...c, keys: [`${c.topic}.action`]})
+//         console.log("detec worker init")
+//     }
+
+//     callback = (msg) => {
+//         console.log(" [x] %s:'%s'", msg.fields.routingKey.split('.')[0], msg.content.toString());
+//         // parse request
+        
+//         // spawn worker
+//     }
+// }

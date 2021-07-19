@@ -1,3 +1,5 @@
+import { rejects } from "assert";
+
 require('dotenv').config()
 var amqp = require('amqplib/callback_api');
 
@@ -53,8 +55,14 @@ class Rabbit {
 export class Producer extends Rabbit{
     topic = 'uid1'
     key = 'uid1.state'
-
-    channel: any
+    up: boolean = false
+    channel: any = undefined
+    
+    onChannelUp = async () => {
+        return new Promise<boolean>((resolve, reject) => {
+            if(this.up) resolve(true)
+            else reject("error on channel up")
+        })}
 
     publish = (msg) => {
         try {            
@@ -74,8 +82,7 @@ export class Producer extends Rabbit{
         });
 
         this.channel = channel
-
-
+        this.up = true
     }
     constructor(p:ProducerOptions){
         super({
@@ -84,7 +91,6 @@ export class Producer extends Rabbit{
             queue : p.queue
         });        
         this.key = p.key
-    
     }
 }
 

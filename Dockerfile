@@ -9,3 +9,4 @@ COPY . .
 RUN npm install
 
 CMD [ "npm", "test" ]
+EXPOSE 3100
